@@ -49,31 +49,50 @@ class ExtractFeatures:
 
     def display_scan_area_by_markers(self, image):
         """Displays the scan area on the homogenized image based on the stag location."""
-        if image is None or self.corners is None:
-            print("Homogenized image or corners are not available.")
+        # Verifica se a imagem e os cantos estão disponíveis
+        if image is None:
+            print("Homogenized image is not available.")
             return None
-        corner = self.corners.astype(int)
-        centroid_x = int(np.mean(corner[:, 0]))
-        centroid_y = int(np.mean(corner[:, 1]))
-        cv2.putText(image, f'ID:{self.stag_id}', (centroid_x + 45, centroid_y -15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
+        if self.corners is None:
+            print("Corners are not detected.")
+            return None
 
-        width = np.max(corner[:, 0]) - np.min(corner[:, 0])
-        pixel_size_mm = width / 20
+        # Converte os cantos para inteiros e calcula o centróide
+        corners_int = self.corners.astype(int)
+        centroid_x = int(np.mean(corners_int[:, 0]))
+        centroid_y = int(np.mean(corners_int[:, 1]))
+
+        # Adiciona texto com o ID na imagem
+        cv2.putText(image, f'ID:{self.stag_id}', (centroid_x + 45, centroid_y - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
+
+        # Determina as dimensões de recorte com base no tipo de medicamento
+        marker_width_px = np.max(corners_int[:, 0]) - np.min(corners_int[:, 0])
+        pixel_size_mm = marker_width_px / 20.0  # Base de 20 mm para a largura do marcador
         crop_width = int(30 * pixel_size_mm)
-        crop_height = int(60 if self.med_type == "Pill" else 75 * pixel_size_mm)
+        crop_height = int(60 * pixel_size_mm) if self.med_type == "Pill" else int(75 * pixel_size_mm)
         crop_y_adjustment = int(10 * pixel_size_mm)
 
+        # Calcula os limites de recorte
         x_min = max(centroid_x - crop_width, 0)
         x_max = min(centroid_x + crop_width, image.shape[1])
         y_min = max(centroid_y - crop_height - crop_y_adjustment, 0)
-        y_max = max(centroid_y - crop_y_adjustment, 0)
+        y_max = min(centroid_y - crop_y_adjustment, image.shape[0])
+
+        # Desenha o retângulo na imagem
         cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
-        
+
+        # Armazena as coordenadas de recorte
         self.scan_areas[self.stag_id] = (x_min, x_max, y_min, y_max)
+
+        # Exibe a imagem
         plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         plt.title('Image with Scan Area')
         plt.show()
+
+        # Retorna as coordenadas de recorte
         return (x_min, x_max, y_min, y_max)
+
 
     def crop_scan_area(self, image, crop_coords):
         """Crops the defined scan area from the homogenized image for further processing."""
