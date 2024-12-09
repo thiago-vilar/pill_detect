@@ -1,156 +1,112 @@
-import os
 import cv2
 import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
 import stag
 from rembg import remove
 
-
 class ExtractFeatures:
-    def __init__(self,  stag_id, med_type, image_path, neg_img_path):
-        """Initializes the class with path to the image, an identifier for the stag marker, and the type of medicine."""
-       
+    def __init__(self, image_path, neg_image_path, stag_id, med_type):
+        """Initializes the class with paths to the images, an identifier for the stag marker, and the type of medicine."""
+        self.image_path = image_path
+        self.neg_image_path = neg_image_path
         self.stag_id = stag_id
         self.med_type = med_type
-        self.image_path = image_path
-        self.image = cv2.imread(self.image_path)
-        if self.image is None:
-            raise ValueError("Image could not be loaded.")
-        # mark subtraction
-        self.neg_img_path = neg_img_path
-        self.neg_image = cv2.imread(self.neg_img_path)
-        if self.neg_image is None:
-            raise ValueError("Image could not be loaded.")
+        self.load_images()
         self.corners = None
-        self.ids = None
-        self.homogenized_image = None
         self.scan_areas = {}
-        self.pixel_size_mm = None
-        self.data = []
 
-    def detect_stag(self):
+    def load_images(self):
+        """Load the primary and negative images from the specified paths."""
+        self.image = cv2.imread(self.image_path)
+        self.neg_image = cv2.imread(self.neg_image_path)
+        if self.image is None or self.neg_image is None:
+            raise ValueError("One or both images could not be loaded. Please check the paths.")
+
+    def detect_stag(self, image):
         """Detects a specific stag marker in the image and initializes measurements for pixel size."""
-        config = {'libraryHD': 17, 'errorCorrection': -1}
-        self.corners, self.ids, _ = stag.detectMarkers(self.image, **config)
-        if self.ids is not None and self.stag_id in self.ids:
-            index = np.where(self.ids == self.stag_id)[0][0]
-            self.corners = self.corners[index].reshape(-1, 2)
-            self.calculate_pixel_size_mm()
-            return True
-        print("Marker with ID", self.stag_id, "not found.")
-        return False
+        config = {'libraryHD': 17, 'errorCorrection': 0}
+        corners, ids, _ = stag.detectMarkers(image, **config)
+        if ids is not None and self.stag_id in ids:
+            index = np.where(ids == self.stag_id)[0][0]
+            self.corners = corners[index].reshape(-1, 2)
+            return self.corners
+        print(f"Marker with ID {self.stag_id} not found in one of the images.")
+        return None
 
-    def calculate_pixel_size_mm(self):
-        """Calculates the pixel size in millimeters using the stag marker as reference."""
-        if self.corners is not None:
-            width_px = np.max(self.corners[:, 0]) - np.min(self.corners[:, 0])
-            self.pixel_size_mm = 20.0 / width_px 
-
-    def homogenize_image_based_on_corners(self):
+    def homogenize_image_based_on_corners(self, image, corners):
         """Normalizes the image perspective based on the detected stag corners."""
-        if self.corners is None:
+        if corners is None:
             print("Corners not detected.")
             return None
-        x, y, w, h = cv2.boundingRect(self.corners.astype(np.float32))
+        x, y, w, h = cv2.boundingRect(corners.astype(np.float32))
         aligned_corners = np.array([
             [x, y],
             [x + w, y],
             [x + w, y + h],
             [x, y + h]
         ], dtype='float32')
-        transform_matrix = cv2.getPerspectiveTransform(self.corners, aligned_corners)
-        self.homogenized_image = cv2.warpPerspective(self.image, transform_matrix, (self.image.shape[1], self.image.shape[0]))
-        return self.homogenized_image
+        transform_matrix = cv2.getPerspectiveTransform(corners, aligned_corners)
+        return cv2.warpPerspective(image, transform_matrix, (image.shape[1], image.shape[0]))
 
-    def display_scan_area_by_markers(self, med_type):
+    def display_scan_area_by_markers(self, image):
         """Displays the scan area on the homogenized image based on the stag location."""
-        if self.homogenized_image is None:
+        if image is None:
             print("Homogenized image is not available.")
             return None
-        corner = self.corners.reshape(-1, 2).astype(int)
-        centroid_x = int(np.mean(corner[:, 0]))
-        centroid_y = int(np.mean(corner[:, 1]))
-        cv2.putText(self.homogenized_image, f'ID:{self.stag_id}', (centroid_x + 45, centroid_y -15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
-        if med_type == "Pill":  
-            width = np.max(corner[:, 0]) - np.min(corner[:, 0])
-            pixel_size_mm = width / 20
-            crop_width = int(30 * pixel_size_mm)
-            crop_height = int(60 * pixel_size_mm)
-            crop_y_adjustment = int(10 * pixel_size_mm)
-            x_min = max(centroid_x - crop_width, 0)
-            x_max = min(centroid_x + crop_width, self.homogenized_image.shape[1])
-            y_min = max(centroid_y - crop_height - crop_y_adjustment, 0)
-            y_max = max(centroid_y - crop_y_adjustment, 0)
-            cv2.rectangle(self.homogenized_image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
-            self.scan_areas[self.stag_id] = (x_min, x_max, y_min, y_max)
-            return self.homogenized_image
-        else:
-            print(f"It's not a red Pill!")
-
-    def crop_scan_area(self):
-        """Crops the defined scan area from the homogenized image for further processing."""
-        if self.stag_id not in self.scan_areas:
-            print(f'ID {self.stag_id} not found.')
+        if self.corners is None:
+            print("Corners are not detected.")
             return None
-        x_min, x_max, y_min, y_max = self.scan_areas[self.stag_id]
-        cropped_image = self.homogenized_image[y_min:y_max, x_min:x_max]
-        # Save
-        directory_path = 'features/cropped_imgs'
-        if not os.path.exists(directory_path):
-            os.makedirs(directory_path)    
-        file_number = 0
-        while os.path.exists(f'{directory_path}/img_cropped_{file_number}.png'):
-            file_number += 1
-        file_path = f'{directory_path}/img_cropped_{file_number}.png'
-        cv2.imwrite(file_path, cropped_image)
-        print(f'Image saved as {file_path}')
+        corners_int = self.corners.astype(int)
+        centroid_x = int(np.mean(corners_int[:, 0]))
+        centroid_y = int(np.mean(corners_int[:, 1]))
+        cv2.putText(image, f'ID:{self.stag_id}', (centroid_x + 45, centroid_y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
+        marker_width_px = np.max(corners_int[:, 0]) - np.min(corners_int[:, 0])
+        pixel_size_mm = marker_width_px / 20.0  # Base de 20 mm para a largura do marcador
+        crop_width = int(30 * pixel_size_mm)
+        crop_height = int(60 * pixel_size_mm) if self.med_type == "Pill" else int(75 * pixel_size_mm)
+        crop_y_adjustment = int(10 * pixel_size_mm)
+
+        # Calcula os limites de recorte
+        x_min = max(centroid_x - crop_width, 0)
+        x_max = min(centroid_x + crop_width, image.shape[1])
+        y_min = max(centroid_y - crop_height - crop_y_adjustment, 0)
+        y_max = min(centroid_y - crop_y_adjustment, image.shape[0])
+
+        # Desenha o retângulo na imagem
+        cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 1)
+
+        # Armazena as coordenadas de recorte
+        self.scan_areas[self.stag_id] = (x_min, x_max, y_min, y_max)
+
+        # Exibe a imagem
+        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.title('Image with Scan Area')
+        plt.show()
+
+        # Retorna as coordenadas de recorte
+        return (x_min, x_max, y_min, y_max)
+
+
+    def crop_scan_area(self, image, crop_coords):
+        """Crops the defined scan area from the homogenized image for further processing."""
+        x_min, x_max, y_min, y_max = crop_coords
+        cropped_image = image[y_min:y_max, x_min:x_max]
         return cropped_image
-
-    def subtract_images(self, cropped_image, neg_img_path):
-        if neg_img_path is not None:
-            image1 = cropped_image
-            image2 = cv2.imread(neg_img_path)
-            if image1 is None or image2 is None:
-                print("Uma ou ambas as imagens não puderam ser carregadas.")
-                return
-            if image1.shape != image2.shape:
-                print("As imagens têm dimensões diferentes e não podem ser subtraídas diretamente.")
-                return
-            subtracted_image = cv2.subtract(image1, image2)
-            return subtracted_image
-
-
+    
     def filter_pdi(self, image):
         """Applies Gaussian blur followed by a Sobel filter to enhance horizontal edges of a reflective object."""
         img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
         filter = np.array([
             [0,  1, 0],
-            [1, -4, 1],
+            [1, -6, 1],
             [0,  1, 0]
         ])
         ddepth = cv2.CV_16S
         img_filtered = cv2.filter2D(img_blur, ddepth, filter)
         abs_img_filtered = cv2.convertScaleAbs(img_filtered)
         return abs_img_filtered
-
-    # def apply_blend_filter(self, image):
-    #     """Transforms image to grayscale, applies Sobel filter, and overlays it on the original image."""
-    #     img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    #     img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
-    #     filter = np.array([
-    #         [0,  1, 0],
-    #         [1, -4, 1],
-    #         [0,  1, 0]
-    #     ])
-    #     ddepth = cv2.CV_16S
-    #     img_filtered = cv2.filter2D(img_blur, ddepth, filter)
-    #     abs_img_filtered = cv2.convertScaleAbs(img_filtered)
-    #     alpha = 0.7 
-    #     blended = cv2.addWeighted(image, 1, cv2.cvtColor(abs_img_filtered, cv2.COLOR_GRAY2BGR), alpha, 0)
-    #     return blended
-
+    
     def remove_background(self, image_np_array):
         """Removes the background from the image using the rembg library."""
         is_success, buffer = cv2.imencode(".png", image_np_array)
@@ -161,23 +117,7 @@ class ExtractFeatures:
         if img_med is None:
             raise ValueError("Failed to decode processed image.")
         return img_med
-
-    def calculate_histograms(self, img_med):
-        """Calculates and returns RGB histograms for the processed image."""
-        histograms = {}
-        if img_med.shape[2] == 4:  
-            alpha_mask = img_med[:, :, 3] > 10
-            img_bgr = img_med[alpha_mask, :3]
-        else:
-            img_bgr = img_med
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        colors = ('r', 'g', 'b')
-        for i, color in enumerate(colors):
-            hist = cv2.calcHist([img_rgb], [i], None, [256], [0, 256])
-            histograms[color] = hist.flatten()
-        return histograms
-
-
+    
     def create_mask(self, img):
         """Creates a binary mask for the foreground object in the image and saves it with transparency."""
         if img.shape[2] == 4:
@@ -200,7 +140,7 @@ class ExtractFeatures:
         #     pickle.dump(mask, file)
         # print(f'Mask saved as {file_path} with transparency in {directory}')
         return mask
-
+    
     def find_and_draw_contours(self, mask):
         """Finds and draws the largest contour around the foreground object."""
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -213,7 +153,6 @@ class ExtractFeatures:
                 return mask_with_contours, largest_contour
         else:
             return None
-
     def compute_chain_code(self, contour):
         """Calculates the chain code for the contour which can be used for shape analysis."""
         start_point = contour[0][0]
@@ -290,165 +229,50 @@ class ExtractFeatures:
             cv2.rectangle(measured_img, (x, y), (x + w, y + h), (0, 255, 0), 1)
             cv2.putText(measured_img, f"{width_mm:.1f}mm x {height_mm:.1f}mm", 
                         (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-        return measures, measured_img
+        return measures, measured_img 
+    
+    def process_images(self):
+        """Process both images, detect markers, homogenize, display, and subtract the images."""
+        corners_image = self.detect_stag(self.image)
+        corners_neg_image = self.detect_stag(self.neg_image)
 
-    def collect_data(self, img_med, mask, largest_contour, chain_code, measures, histograms):
-        """Collects all extracted data and prepares it for saving or further analysis."""
-        # Ensure the directory for saving images exists
-        images_directory = "extracted_features/images"
-        os.makedirs(images_directory, exist_ok=True)
-        # Save the median image with background removed
-        med_img_path = os.path.join(images_directory, f"{self.stag_id}_img_med.png")
-        cv2.imwrite(med_img_path, img_med)
-        # Save the mask image
-        mask_img_path = os.path.join(images_directory, f"{self.stag_id}_mask.png")
-        mask_rgba = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGBA)  # Convert mask to RGBA for visibility
-        mask_rgba[:, :, 3] = mask  # Apply the mask to the alpha channel
-        cv2.imwrite(mask_img_path, mask_rgba)
-        # Assuming you want to save contour drawing
-        contour_img_path = os.path.join(images_directory, f"{self.stag_id}_contour.png")
-        contour_img = img_med.copy()
-        cv2.drawContours(contour_img, [largest_contour], -1, (0, 255, 0), 3)
-        cv2.imwrite(contour_img_path, contour_img)
-        # Prepare data entry
-        data_entry = {
-            "Medicine Type": self.med_type,
-            "Image Path": med_img_path,
-            "Mask Path": mask_img_path,
-            "Contour Path": contour_img_path,
-            "Chain Code Length": len(chain_code),
-            "Chain Code": str(chain_code),
-            "Width (mm)": measures[0][0] if measures and len(measures) > 0 else None,
-            "Height (mm)": measures[0][1] if measures and len(measures) > 0 else None,
-            **{f"{color}_histogram": hist.tolist() for color, hist in histograms.items()}
-        }
-        self.data.append(data_entry)
+        if corners_image is not None and corners_neg_image is not None:
+            homogenized_image = self.homogenize_image_based_on_corners(self.image, corners_image)
+            homogenized_neg_image = self.homogenize_image_based_on_corners(self.neg_image, corners_neg_image)
 
-    def save_data_to_csv(self, filename='medicines_features.csv'):
-        """Appends the processed data to a CSV file, ensuring data continuity."""
-        if self.data:
-            df = pd.read_csv(filename) if os.path.exists(filename) else pd.DataFrame()
-            new_df = pd.DataFrame(self.data)
-            df = pd.concat([df, new_df], ignore_index=True)
-            df.to_csv(filename, index=False)
-            print(f"Data appended to {filename}.")
+            crop_coords_image = self.display_scan_area_by_markers(homogenized_image)
+            crop_coords_neg_image = self.display_scan_area_by_markers(homogenized_neg_image)
 
+            cropped_image = self.crop_scan_area(homogenized_image, crop_coords_image)
+            cropped_neg_image = self.crop_scan_area(homogenized_neg_image, crop_coords_neg_image)
+
+            subtracted_image = cv2.subtract(cropped_image, cropped_neg_image)
+            self.display_image(subtracted_image, 'Subtracted Image')
+            filter_pdi = self.filter_pdi(subtracted_image)
+            self.display_image(filter_pdi, 'Laplacian')
+            remove_background = self.remove_background(filter_pdi)
+            self.display_image(remove_background, 'Removed Background')
+            mask = self.create_mask(remove_background)
+            self.display_image(mask, 'Mask')
+
+
+        else:
+            print("Markers not found in one or both images.")
+
+    def display_image(self, image, title):
+        """Displays the image."""
+        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.title(title)
+        plt.show()
 
 def main():
-    """Main function to execute the process and display results of each step."""
-   
     stag_id = 2
     med_type = "Pill"
     image_path = ".\\thiago_fotos_MED\\img_2_002.jpg"
-    neg_img_path = ".\\features\\cropped_imgs\\img_cropped_pill_2.png"
-    processor = ExtractFeatures(stag_id, med_type, image_path, neg_img_path)
+    neg_image_path = ".\\thiago_fotos_SUB\\img_2_002.jpg"
     
-    if processor.detect_stag():
-        homogenized = processor.homogenize_image_based_on_corners()
-        if homogenized is not None:
-            plt.imshow(cv2.cvtColor(homogenized, cv2.COLOR_BGR2RGB))
-            plt.title('Homogenized Image')
-            plt.show()
-
-            marked_image = processor.display_scan_area_by_markers(med_type)
-            if marked_image is not None:
-                plt.imshow(cv2.cvtColor(marked_image, cv2.COLOR_BGR2RGB))
-                plt.title('Marked Scan Area')
-                plt.show()
-
-                cropped = processor.crop_scan_area()
-                if cropped is not None:
-                    plt.imshow(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB))
-                    plt.title('Cropped Scan Area')
-                    plt.show()
-
-                    subtraction_img = processor.subtract_images(cropped, neg_img_path)
-                    if subtraction_img is not None:
-                        plt.imshow(subtraction_img, cmap='gray')
-                        plt.title('Subtraction Results')
-                        plt.show()
-
-                        filtered_pdi = processor.filter_pdi(cropped)
-                        if filtered_pdi is not None:
-                            plt.imshow(filtered_pdi, cmap='gray')
-                            plt.title('Experimental Filter')
-                            plt.show()
-
-                            blend_filt = processor.apply_blend_filter(cropped)
-                            if blend_filt is not None:    
-                                plt.imshow(blend_filt, cmap='gray')
-                                plt.title('Blend')
-                                plt.show()
-
-                                background_removed = processor.remove_background(cropped)
-                                if background_removed is not None:
-                                    img_med = background_removed.copy()
-                                    plt.imshow(cv2.cvtColor(img_med, cv2.COLOR_BGR2RGB))
-                                    plt.title('Background Removed')
-                                    plt.show()
-
-                                    mask = processor.create_mask(background_removed)
-                                    if mask is not None:
-                                        plt.imshow(mask, cmap='gray')
-                                        plt.title('Mask')
-                                        plt.show()
-
-                                        contoured_image, largest_contour = processor.find_and_draw_contours(mask)
-                                        if contoured_image is not None and largest_contour is not None and largest_contour.size > 0:
-                                            plt.imshow(cv2.cvtColor(contoured_image, cv2.COLOR_BGR2RGB))
-                                            plt.title('Largest Contour by Mask')
-                                            plt.show()
-
-                                            chain_code, _ = processor.compute_chain_code(largest_contour)
-                                            if chain_code is not None:
-                                                chain_drawn_image = processor.draw_chain_code(img_med, largest_contour, chain_code)
-                                                plt.imshow(cv2.cvtColor(chain_drawn_image, cv2.COLOR_BGR2RGB))
-                                                plt.title('Chain Code Drawn')
-                                                plt.show()
-
-                                                measures, measured_medicine = processor.medicine_measures(img_med, [largest_contour])
-                                                if measured_medicine is not None:
-                                                    plt.imshow(cv2.cvtColor(measured_medicine, cv2.COLOR_BGR2RGB))
-                                                    plt.title('Measured Medicine')
-                                                    plt.show()
-
-                                                    histograms = processor.calculate_histograms(img_med)
-                                                    if histograms:
-                                                        plt.figure(figsize=(10, 5))
-                                                        plt.title('RGB Histograms')
-                                                        plt.xlabel('Pixel Intensity')
-                                                        plt.ylabel('Pixel Count')
-                                                        for color in histograms:
-                                                            plt.plot(histograms[color], label=color.upper())
-                                                        plt.legend()
-                                                        plt.grid(True)
-                                                        plt.show()
-
-                                                    processor.collect_data(img_med, mask, largest_contour, chain_code, measures, histograms)
-                                                    processor.save_data_to_csv("extracted_medicine_features.csv")
-                                            else:
-                                                print("No valid measures found.")
-                                        else:
-                                            print("Chain code computation failed.")
-                                    else:
-                                        print("Contours could not be extracted.")
-                                else:
-                                    print("Mask creation failed.")
-                            else:
-                                print("Background removal failed.")
-                        else:
-                            print("Binary transform failed")
-                    else:
-                        print("Laplacian filtering failed.")
-                else:
-                    print("Image cropping failed.")
-            else:
-                print("Marked image creation failed.")
-        else:
-            print("Homogenization failed.")
-    else:
-        print("Stag detection failed.")
+    processor = ExtractFeatures(image_path, neg_image_path, stag_id, med_type)
+    processor.process_images()
 
 if __name__ == "__main__":
     main()
-
