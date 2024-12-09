@@ -13,6 +13,12 @@ class ExtractFeatures:
         self.image_path = image_path
         self.neg_img_path = neg_img_path
         self.load_images() 
+        self.corners = None
+        self.ids = None
+        self.homogenized_image = None
+        self.scan_areas = {}
+        self.pixel_size_mm = None
+        self.data = []
 
     def load_images(self):
         """Load the primary and negative images from the specified paths."""
@@ -20,6 +26,24 @@ class ExtractFeatures:
         self.neg_image = cv2.imread(self.neg_img_path)
         if self.image is None or self.neg_image is None:
             raise ValueError("One or both images could not be loaded, please check the paths.")
+        
+    def detect_stag(self, ids, corners):
+        """Detects a specific stag marker in the image and initializes measurements for pixel size."""
+        config = {'libraryHD': 17, 'errorCorrection': -1}
+        self.corners, self.ids, _ = stag.detectMarkers(self.image, **config)
+        if self.ids is not None and self.stag_id in self.ids:
+            index = np.where(self.ids == self.stag_id)[0][0]
+            self.corners = self.corners[index].reshape(-1, 2)
+            self.calculate_pixel_size_mm()
+            return True
+        print("Marker with ID", self.stag_id, "not found.")
+        return False
+
+    def calculate_pixel_size_mm(self):
+        """Calculates the pixel size in millimeters using the stag marker as reference."""
+        if self.corners is not None:
+            width_px = np.max(self.corners[:, 0]) - np.min(self.corners[:, 0])
+            self.pixel_size_mm = 20.0 / width_px 
 
     def homogenize_image_based_on_corners(self, image, corners):
         """Normalizes the image perspective based on the detected stag corners."""
@@ -79,20 +103,24 @@ class ExtractFeatures:
         return cv2.subtract(image1, image2)
 
     def process_images(self):
-        """Main method to process the images."""
-        homogenized_main = self.detect_and_homogenize(self.image)
-        homogenized_neg = self.detect_and_homogenize(self.neg_image)
-
-        if homogenized_main is not None and homogenized_neg is not None:
-            subtracted_image = self.subtract_images(homogenized_main, homogenized_neg)
-            if subtracted_image is not None:
-                self.display_image(subtracted_image, 'Subtracted Image Result')
-
-    def display_image(self, image, title):
-        """Utility method to display an image."""
-        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        plt.title(title)
+        """images."""
+        image_med, image_sub = self.detect_stag(self.image, self.neg_image)
+        homog_1, homog_2 = self.homogenize_image_based_on_corners(image_med, image_sub)
+        plt.imshow(cv2.cvtColor(homog_1, homog_2, cv2.COLOR_BGR2RGB))
+        plt.title('Homogenized Image')
         plt.show()
+        marked_image_1, marked_image_2 = self.display_scan_area_by_markers(self.med_type)
+        if (marked_image_1 is not None) and (marked_image_2 is not None):
+            plt.imshow(cv2.cvtColor(marked_image_1, marked_image_2, cv2.COLOR_BGR2RGB))
+            plt.title('Marked Scan Areas')
+            plt.show()
+            cropped_1, cropped_2 = self.crop_scan_area(marked_image_1, marked_image_2)
+            if (cropped_1 is not None) and (cropped_2 is not None) :
+                    plt.imshow(cv2.cvtColor(cropped_1, cropped_2, cv2.COLOR_BGR2RGB))
+                    plt.title('Cropped Scan Areas')
+                    plt.show()
+
+
 
 def main():
     stag_id = 2
@@ -102,11 +130,7 @@ def main():
     processor = ExtractFeatures(stag_id, med_type, image_path, neg_img_path)
     processor.process_images()
 
-    define_area_1, define_area_2 = processor.homogenize_image_based_on_corners(image_path, neg_img_path)
-    display_1, display_2 = processor.display_scan_area_by_markers(define_area_1, define_area_2)
-    plt.imshow(cv2.cvtColor(display_1, display_2, cv2.COLOR_BGR2RGB))
-    plt.title('Display')
-    plt.show()
+
 
 if __name__ == "__main__":
     main()
