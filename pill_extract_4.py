@@ -290,7 +290,7 @@ class ExtractFeatures:
         plt.title(title)
         plt.show()
 
-    def collect_data(self, img_med, mask, largest_contour, chain_code, measures, histograms):
+    def collect_data(self, mask, largest_contour, chain_code, measures, color_stats):
         if largest_contour is not None:
             area_mm2 = cv2.contourArea(largest_contour) * (self.pixel_size_mm ** 2)
             perimeter_mm = cv2.arcLength(largest_contour, True) * self.pixel_size_mm
@@ -300,7 +300,6 @@ class ExtractFeatures:
             aspect_ratio = width_mm / height_mm
             bounding_box_area_mm2 = (w * h) * (self.pixel_size_mm ** 2)
             extent = area_mm2 / bounding_box_area_mm2
-
             hull = cv2.convexHull(largest_contour)
             hull_area_mm2 = cv2.contourArea(hull) * (self.pixel_size_mm ** 2)
             solidity = area_mm2 / hull_area_mm2
@@ -366,7 +365,7 @@ class ExtractFeatures:
                 if measured_medicine is not None:
                     self.display_image(measured_medicine, 'Measured Medicine')
                     
-                    data_entry = self.collect_data(measured_medicine, mask, largest_contour, chain_code, measures, color_stats)
+                    data_entry = self.collect_data(mask, largest_contour, chain_code, measures, color_stats)
                     self.save_data_to_csv(data_entry)
 
                
