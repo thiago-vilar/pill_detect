@@ -282,8 +282,9 @@ class ExtractFeatures:
         if os.path.exists(filename):
             df.to_csv(filename, mode='a', header=False, index=False)
         else:
-            df.to_csv(filename, mode='w', index=False)
+            df.to_csv(filename, mode='w', header=True, index=False)  
         print(f"Data saved to {filename}.")
+
 
     def display_image(self, image, title):
         plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
@@ -304,6 +305,18 @@ class ExtractFeatures:
             hull_area_mm2 = cv2.contourArea(hull) * (self.pixel_size_mm ** 2)
             solidity = area_mm2 / hull_area_mm2
 
+            # Add histogram data to the entry
+            histogram_data = {
+                "Histogram R Mean": round(color_stats['r']['mean'], 2),
+                "Histogram R StdDev": round(color_stats['r']['stddev'], 2),
+                "Histogram G Mean": round(color_stats['g']['mean'], 2),
+                "Histogram G StdDev": round(color_stats['g']['stddev'], 2),
+                "Histogram B Mean": round(color_stats['b']['mean'], 2),
+                "Histogram B StdDev": round(color_stats['b']['stddev'], 2),
+                "Histogram Gray Mean": round(color_stats['gray']['mean'], 2),
+                "Histogram Gray StdDev": round(color_stats['gray']['stddev'], 2),
+            }
+
             data_entry = {
                 "Medicine Type": self.med_type,
                 "Height (mm)": round(height_mm, 2),
@@ -314,12 +327,8 @@ class ExtractFeatures:
                 "Extent": round(extent, 2),
                 "Solidity": round(solidity, 2),
                 "Chain Code Length": len(chain_code),
-                "Chain Code": chain_code,
-                "Histogram R": round(self.color_stats['r']['mean'], 2),
-                "Histogram G": round(self.color_stats['g']['mean'], 2),
-                "Histogram B": round(self.color_stats['b']['mean'], 2),
-                "Histogram Gray": round(self.color_stats['gray']['mean'], 2),
-
+                "Chain Code": str(chain_code),
+                **histogram_data
             }
             self.save_data_to_csv(data_entry)
             
@@ -364,6 +373,7 @@ class ExtractFeatures:
                 measures, measured_medicine = self.medicine_measures(cropped_image, [largest_contour])
                 if measured_medicine is not None:
                     self.display_image(measured_medicine, 'Measured Medicine')
+                    
                     
                     data_entry = self.collect_data(mask, largest_contour, chain_code, measures, color_stats)
                     self.save_data_to_csv(data_entry)
