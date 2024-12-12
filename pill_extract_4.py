@@ -183,40 +183,57 @@ class ExtractFeatures:
         return abs_img_filtered
     
     def find_and_draw_contours(self, mask):
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        """Finds and draws the largest contour around the foreground object."""
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
             if largest_contour.size > 0:
-                overlay = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-                cv2.drawContours(overlay, [largest_contour], -1, (0, 255, 0), 2)
-                return overlay, largest_contour
-        return None, None
+                mask_with_contours = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGRA)
+                mask_with_contours[:, :, 3] = mask
+                cv2.drawContours(mask_with_contours, [largest_contour], -1, (0, 0, 255, 255), 2)
+                return mask_with_contours, largest_contour
+        else:
+            return None
 
     def compute_chain_code(self, contour):
-        """Computes the chain code for a contour, returns the complete sequence and its length."""
+        """Calculates the chain code for the contour which can be used for shape analysis."""
+        start_point = contour[0][0]
+        current_point = start_point
         chain_code = []
-        moves = [
-            (1, 1), (0, 1), (-1, 1), (-1, 0),
-            (-1, -1), (0, -1), (1, -1), (1, 0)
-        ]
-        move_map = {move: idx for idx, move in enumerate(moves)}
-        current_point = tuple(contour[0][0])
-
-        for point in contour[1:]:
-            next_point = tuple(point[0])
-            move = (next_point[0] - current_point[0], next_point[1] - current_point[1])
-            if move in move_map:
-                chain_code.append(move_map[move])
+        moves = {
+            (-1, 0) : 3,
+            (-1, 1) : 2,
+            (0, 1)  : 1,
+            (1, 1)  : 0,
+            (1, 0)  : 7,
+            (1, -1) : 6,
+            (0, -1) : 5,
+            (-1, -1): 4
+        }
+        for i in range(1, len(contour)):
+            next_point = contour[i][0]
+            dx = next_point[0] - current_point[0]
+            dy = next_point[1] - current_point[1]
+            if dx != 0:
+                dx = dx // abs(dx)
+            if dy != 0:
+                dy = dy // abs(dy)
+            move = (dx, dy)
+            if move in moves:
+                chain_code.append(moves[move])
             current_point = next_point
-
         # Close the loop
-        first_point = tuple(contour[0][0])
-        move = (first_point[0] - current_point[0], first_point[1] - current_point[1])
-        if move in move_map:
-            chain_code.append(move_map[move])
-
+        dx = start_point[0] - current_point[0]
+        dy = start_point[1] - current_point[1]
+        if dx != 0:
+            dx = dx // abs(dx)
+        if dy != 0:
+            dy = dy // abs(dy)
+        move = (dx, dy)
+        if move in moves:
+            chain_code.append(moves[move])
         return chain_code, len(chain_code)
-    
+
     def draw_chain_code(self, img_med, contour, chain_code):
         """Draws the chain code on the image to visually represent contour direction changes."""
         start_point = tuple(contour[0][0])
@@ -277,7 +294,6 @@ class ExtractFeatures:
         if largest_contour is not None:
             area_mm2 = cv2.contourArea(largest_contour) * (self.pixel_size_mm ** 2)
             perimeter_mm = cv2.arcLength(largest_contour, True) * self.pixel_size_mm
-            chain_length = len(chain_code)
             x, y, w, h = cv2.boundingRect(largest_contour)
             width_mm = w * self.pixel_size_mm
             height_mm = h * self.pixel_size_mm
@@ -291,21 +307,23 @@ class ExtractFeatures:
 
             data_entry = {
                 "Medicine Type": self.med_type,
+                "Height (mm)": round(height_mm, 2),
+                "Width (mm)": round(width_mm, 2),
                 "Mask Area (mm^2)": round(area_mm2, 2),
                 "Perimeter (mm)": round(perimeter_mm, 2),
-                "Chain Code": chain_code,
-                "Chain Code Length": chain_length,
-                "Histogram R": round(color_stats['r']['mean'], 2),
-                "Histogram G": round(color_stats['g']['mean'], 2),
-                "Histogram B": round(color_stats['b']['mean'], 2),
-                "Histogram Gray": round(color_stats['gray']['mean'], 2),
-                "Width (mm)": round(width_mm, 2),
-                "Height (mm)": round(height_mm, 2),
                 "Aspect Ratio": round(aspect_ratio, 2),
                 "Extent": round(extent, 2),
-                "Solidity": round(solidity, 2)
+                "Solidity": round(solidity, 2),
+                "Chain Code Length": len(chain_code),
+                "Chain Code": chain_code,
+                "Histogram R": round(self.color_stats['r']['mean'], 2),
+                "Histogram G": round(self.color_stats['g']['mean'], 2),
+                "Histogram B": round(self.color_stats['b']['mean'], 2),
+                "Histogram Gray": round(self.color_stats['gray']['mean'], 2),
+
             }
             self.save_data_to_csv(data_entry)
+            
 
     def process_images(self):
         """Main processing function."""
@@ -336,18 +354,19 @@ class ExtractFeatures:
             mask = self.create_mask(remove_background)
             self.display_image(mask, 'Mask ')
 
-            overlay, largest_contour = self.find_and_draw_contours(mask)
-            if overlay is not None and largest_contour is not None:
-                self.display_image(overlay, 'Largest Contour by Mask')
-                
-                chain_code, chain_length = self.compute_chain_code(largest_contour)
-                chain_drawn_image = self.draw_chain_code(remove_background, largest_contour, chain_code)
-                self.display_image(chain_drawn_image, 'Chain Code Drawn')
+            contoured_image, largest_contour = self.find_and_draw_contours(mask)
+            if contoured_image is not None and largest_contour is not None and largest_contour.size > 0:
+                self.display_image(contoured_image, 'Largest Contour by Mask')
+                chain_code, _ = self.compute_chain_code(largest_contour)
+                if chain_code is not None:
+                    chain_drawn_image = self.draw_chain_code(remove_background, largest_contour, chain_code)
+                    self.display_image(chain_drawn_image, 'Chain Code Drawn')
 
                 measures, measured_medicine = self.medicine_measures(cropped_image, [largest_contour])
                 if measured_medicine is not None:
                     self.display_image(measured_medicine, 'Measured Medicine')
-                    data_entry = self.collect_data(measured_medicine, mask, largest_contour, chain_code, measures, histogram)
+                    
+                    data_entry = self.collect_data(measured_medicine, mask, largest_contour, chain_code, measures, color_stats)
                     self.save_data_to_csv(data_entry)
 
                

@@ -380,10 +380,13 @@ class ExtractFeatures:
         if corners_image is not None and corners_neg_image is not None:
             homogenized_image = self.homogenize_image_based_on_corners(self.image, corners_image)
             homogenized_neg_image = self.homogenize_image_based_on_corners(self.neg_image, corners_neg_image)
+           
             crop_coords_image = self.display_scan_area_by_markers(homogenized_image)
             crop_coords_neg_image = self.display_scan_area_by_markers(homogenized_neg_image)
+           
             cropped_image = self.crop_scan_area(homogenized_image, crop_coords_image)
             cropped_neg_image = self.crop_scan_area(homogenized_neg_image, crop_coords_neg_image)
+            
             subtracted_image = cv2.subtract(cropped_image, cropped_neg_image)
             self.display_image(subtracted_image, 'Subtracted Image')
            
@@ -412,10 +415,11 @@ class ExtractFeatures:
                 if chain_code is not None:
                     chain_drawn_image = self.draw_chain_code(remove_background, largest_contour, chain_code)
                     self.display_image(chain_drawn_image, 'Chain Code Drawn')
-                    
+
                 measures, measured_medicine = self.medicine_measures(cropped_image, [largest_contour])
                 if measured_medicine is not None:
                     self.display_image(measured_medicine, 'Measured Medicine')
+                    
                     data_entry = self.collect_data(measured_medicine, mask, largest_contour, chain_code, measures, histogram)
                     self.save_data_to_csv(data_entry)
         else:
