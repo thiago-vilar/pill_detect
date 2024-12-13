@@ -146,13 +146,13 @@ class ExtractFeatures:
         colors = ('r', 'g', 'b')
         histograms = {}
         color_stats = {}
-        for i, color in enumerate(colors):
-            hist = cv2.calcHist([img_rgb], [i], None, [256], [0, 256]).flatten()
+        for i, color in enumerate(colors): #histograma equalizado para não absoirver exesso de tons pretos(1% => 2.56)
+            hist = cv2.calcHist([img_rgb], [i], None, [256], [2.56, 256]).flatten()
             histograms[color] = hist
             color_stats[color] = {"mean": np.mean(hist), "stddev": np.std(hist)}
 
         img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-        hist_gray = cv2.calcHist([img_gray], [0], None, [256], [0, 256]).flatten()
+        hist_gray = cv2.calcHist([img_gray], [0], None, [256], [2.56, 256]).flatten()
         histograms['gray'] = hist_gray
         color_stats['gray'] = {"mean": np.mean(hist_gray), "stddev": np.std(hist_gray)}
         return histograms, color_stats
@@ -314,13 +314,13 @@ class ExtractFeatures:
                 "Histogram B Mean": round(color_stats['b']['mean'], 2),
                 "Histogram B StdDev": round(color_stats['b']['stddev'], 2),
                 "Histogram Gray Mean": round(color_stats['gray']['mean'], 2),
-                "Histogram Gray StdDev": round(color_stats['gray']['stddev'], 2),
+                "Histogram Gray StdDev": round(color_stats['gray']['stddev'], 2)
             }
 
             data_entry = {
                 "Medicine Type": self.med_type,
-                "Height (mm)": round(height_mm, 2),
                 "Width (mm)": round(width_mm, 2),
+                "Height (mm)": round(height_mm, 2),
                 "Mask Area (mm^2)": round(area_mm2, 2),
                 "Perimeter (mm)": round(perimeter_mm, 2),
                 "Aspect Ratio": round(aspect_ratio, 2),
@@ -381,10 +381,10 @@ class ExtractFeatures:
                
 
 def main():
-    stag_id = 8
+    stag_id = 6
     med_type = "Pill"
-    image_path = "./thiago_fotos_MED/img_8_008.jpg"
-    neg_image_path = "./thiago_fotos_SUB/img_8_008.jpg"
+    image_path = "./thiago_fotos_PILLS_ON/img_6_001.jpg"
+    neg_image_path = "./thiago_fotos_SUB_PILLS/img_6_001.jpg"
     processor = ExtractFeatures(image_path, neg_image_path, stag_id, med_type)
     processor.process_images()
 
